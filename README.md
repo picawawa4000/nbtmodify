@@ -23,7 +23,7 @@ int main() {
     // Pretty-print to cout
     std::cout << root.to_string() << std::endl;
     // Access member of compound tag
-    std::cout << (nbt::int_t)(root["foo"].get()) << std::endl;
+    std::cout << root["foo"].get<nbt::int_t>() << std::endl;
 
     // To be continued...
 
