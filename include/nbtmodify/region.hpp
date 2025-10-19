@@ -55,13 +55,12 @@ struct BlockProperties {
 
 BlockProperties tagToProperties(NBTTag tag) {
     BlockProperties ret{};
-    ret.name = (std::string)tag["Name"].value();
-    std::optional<NBTTag> propertiesTag = tag["Properties"];
+    ret.name = tag["Name"].get<std::string>();
     std::vector<NBTTag> properties;
-    if (propertiesTag) properties = (std::vector<NBTTag>)propertiesTag.value();
+    if (tag.contains("Properties")) properties = tag["Properties"].get<std::vector<NBTTag>>();
     ret.properties.resize(properties.size());
     for (int i = 0; i < properties.size(); ++i)
-        ret.properties[i] = {properties[i].name, (std::string)properties[i]};
+        ret.properties[i] = {properties[i].name, properties[i].get<std::string>()};
     return ret;
 }
 
@@ -112,7 +111,7 @@ static internal::pos to_pos(int idx) {
 std::vector<int> parse_paletted_container_block(NBTTag container, RegionBlockCache * cache) {
     int num_outputs = 4096;
     std::vector<int> out(num_outputs);
-    std::vector<NBTTag> palette = (std::vector<NBTTag>)container["palette"].value();
+    std::vector<NBTTag> palette = container["palette"].get<std::vector<NBTTag>>();
     if (palette.size() == 1) {
         int entry_index = cache->getOrAddProperties(internal::tagToProperties(palette[0]));
         for (int idx = 0; idx < num_outputs; ++idx)
@@ -122,12 +121,12 @@ std::vector<int> parse_paletted_container_block(NBTTag container, RegionBlockCac
     std::vector<BlockProperties> normalisedPalette;
     normalisedPalette.resize(palette.size());
     for (int i = 0; i < palette.size(); ++i) normalisedPalette[i] = internal::tagToProperties(palette[i]);
-    std::vector<NBTTag> data = container["data"].value();
+    std::vector<NBTTag> data = container["data"].get<std::vector<NBTTag>>();
     nbt::byte_t bit_size = std::max((int)std::ceil(std::log2(palette.size())), 4);
     nbt::ulong_t mask = std::pow(2, bit_size) - 1;
     nbt::ulong_t index = 0;
     nbt::byte_t len_val = 64;
-    nbt::ulong_t val = (nbt::ulong_t)(nbt::long_t)data[index];
+    nbt::ulong_t val = data[index].get<long_t>();
     nbt::ushort_t i = 0;
     //if using biome parsing and the size of the palette is 1 or 2, entries will fit cleanly into longs,
     //and the other jiggery-pokery is not required
@@ -135,7 +134,7 @@ std::vector<int> parse_paletted_container_block(NBTTag container, RegionBlockCac
         if (len_val < bit_size) {
             ++index;
             len_val = 64;
-            val = (nbt::ulong_t)(nbt::long_t)data[index];
+            val = data[index].get<long_t>();
         }
         auto palette_index = val & mask;
         if (palette_index >= palette.size()) {
@@ -154,22 +153,22 @@ std::vector<int> parse_paletted_container_block(NBTTag container, RegionBlockCac
 std::vector<int> parse_paletted_container_biome(NBTTag container, RegionBiomeCache * cache) {
     int num_outputs = 64;
     std::vector<int> out(num_outputs);
-    std::vector<NBTTag> palette = (std::vector<NBTTag>)container["palette"].value();
+    std::vector<NBTTag> palette = container["palette"].get<std::vector<NBTTag>>();
     if (palette.size() == 1) {
-        int entry_index = cache->getOrAddBiome(palette[0]);
+        int entry_index = cache->getOrAddBiome(palette[0].get<std::string>());
         for (int idx = 0; idx < num_outputs; ++idx)
             out[idx] = entry_index;
         return out;
     }
     std::vector<std::string> normalisedPalette;
     normalisedPalette.resize(palette.size());
-    for (std::size_t i = 0; i < palette.size(); ++i) normalisedPalette[i] = (std::string)palette[i];
-    std::vector<NBTTag> data = container["data"].value();
+    for (std::size_t i = 0; i < palette.size(); ++i) normalisedPalette[i] = palette[i].get<std::string>();
+    std::vector<NBTTag> data = container["data"].get<std::vector<NBTTag>>();
     nbt::byte_t bit_size = (nbt::byte_t)std::ceil(std::log2(palette.size()));
     nbt::ulong_t mask = std::pow(2, bit_size) - 1;
     nbt::ulong_t index = 0;
     nbt::byte_t len_val = 64;
-    nbt::ulong_t val = (nbt::ulong_t)(nbt::long_t)data[index];
+    nbt::ulong_t val = data[index].get<nbt::long_t>();
     nbt::ushort_t i = 0;
     //if using biome parsing and the size of the palette is 1 or 2, entries will fit cleanly into longs,
     //and the other jiggery-pokery is not required
@@ -178,12 +177,12 @@ std::vector<int> parse_paletted_container_biome(NBTTag container, RegionBiomeCac
             ++index;
             if (palette.size() < 3) {
                 len_val = 64;
-                val = (nbt::ulong_t)(nbt::long_t)data[index];
+                val = data[index].get<long_t>();
             } else {
                 nbt::byte_t len_last_val = len_val;
                 len_val = 64;
                 nbt::ulong_t last_data = val;
-                val = (nbt::ulong_t)(nbt::long_t)data[index];
+                val = data[index].get<long_t>();
                 nbt::byte_t bit_size_to_extract = bit_size - len_last_val;
                 nbt::ulong_t temp_mask = std::pow(2, bit_size_to_extract) - 1;
                 out[i] = cache->getOrAddBiome(normalisedPalette[((val & temp_mask) << len_last_val) | last_data]);
@@ -217,24 +216,24 @@ struct Chunk {
     Chunk(std::optional<NBTTag> data, byte_t x, byte_t z, internal::RegionBlockCache * blockCache, internal::RegionBiomeCache * biomeCache) : data(data) {
         if (data) {
             NBTTag rdata = data.value();
-            this->status = (std::string)rdata["Status"].value();
+            this->status = rdata["Status"].get<std::string>();
             if (this->status != "minecraft:full" and this->status != "full") {
                 this->blocks = {};
                 this->biomes = {};
             } else {
                 std::vector<std::vector<int>> block_sections(24);
                 std::vector<std::vector<int>> biome_sections(24);
-                for (std::size_t i = 0; i < ((std::vector<NBTTag>)rdata["sections"].value()).size(); ++i) {
+                for (std::size_t i = 0; i < rdata["sections"].get<std::vector<NBTTag>>().size(); ++i) {
                     /*if (x == 0 and z == 0 and i == 5) {
                         //maybe I could have done better with this notation...
                         std::cout << (rdata["sections"].value()[5].value()).to_string() << std::endl;
                     }*/
-                    NBTTag section = ((std::vector<NBTTag>)rdata["sections"].value())[i];
-                    char y = section["Y"].value();
+                    NBTTag section = rdata["sections"][i];
+                    char y = section["Y"].get<byte_t>();
                     //std::vector<NBTTag> blocklight = section["BlockLight"];
                     //std::vector<NBTTag> skylight = section["SkyLight"];
-                    std::vector<int> sorted_blocks = internal::parse_paletted_container_block(section["block_states"].value(), blockCache);
-                    std::vector<int> sorted_biomes = internal::parse_paletted_container_biome(section["biomes"].value(), biomeCache);
+                    std::vector<int> sorted_blocks = internal::parse_paletted_container_block(section["block_states"], blockCache);
+                    std::vector<int> sorted_biomes = internal::parse_paletted_container_biome(section["biomes"], biomeCache);
                     block_sections[i] = sorted_blocks;
                     biome_sections[i] = sorted_biomes;
                 }

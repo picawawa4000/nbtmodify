@@ -20,6 +20,8 @@
 
 namespace nbt {
 
+struct NBTTag;
+
 typedef unsigned char byte_t;
 typedef __int16_t short_t;
 typedef __uint16_t ushort_t;
@@ -141,7 +143,23 @@ static byte_t get_highest_byte(ulong_t byte_data) {
     return 0;
 }
 
+template <typename T> constexpr bool is_nbt_type = false;
+template <> constexpr bool is_nbt_type<byte_t> = true;
+template <> constexpr bool is_nbt_type<short_t> = true;
+template <> constexpr bool is_nbt_type<int_t> = true;
+template <> constexpr bool is_nbt_type<long_t> = true;
+template <> constexpr bool is_nbt_type<float> = true;
+template <> constexpr bool is_nbt_type<double> = true;
+template <> constexpr bool is_nbt_type<std::string> = true;
+template <> constexpr bool is_nbt_type<std::vector<NBTTag>> = true;
+template <> constexpr bool is_nbt_type<std::vector<byte_t>> = true;
+template <> constexpr bool is_nbt_type<std::vector<int_t>> = true;
+template <> constexpr bool is_nbt_type<std::vector<long_t>> = true;
+template <> constexpr bool is_nbt_type<NBTTag> = true;
+
 }
+
+template <typename T> concept NbtType = internal::is_nbt_type<T>;
 
 struct NBTTag {
     Tag type;
@@ -156,16 +174,10 @@ struct NBTTag {
     static NBTTag from_nbt(std::vector<byte_t>::iterator& bytes, bool suppress_name = false, std::optional<byte_t> type_override = {});
     std::vector<byte_t> to_nbt();
     std::string to_string(int tab_level = 0) const;
-    template <size_t Size> std::optional<NBTTag> operator[](const char (&name)[Size]) const;
-    std::optional<NBTTag> operator[](std::size_t index) const;
-    operator char() {if (this->type == TAG_BYTE) return std::get<char>(this->value); std::cerr << "Tried to extract byte from non-byte tag " << this->name << std::endl; throw;}
-    operator short_t() {if (this->type == TAG_SHORT) return std::get<short_t>(this->value); std::cerr << "Tried to extract short from non-short tag " << this->name << std::endl; throw;}
-    operator int_t() {if (this->type == TAG_INT) return std::get<int_t>(this->value); std::cerr << "Tried to extract int from non-int tag" << this->name << std::endl; throw;}
-    operator long_t() {if (this->type == TAG_LONG) return std::get<long_t>(this->value); std::cerr << "Tried to extract long from non-long tag " << this->name << std::endl; throw;}
-    operator float() {if (this->type == TAG_FLOAT) return std::get<float>(this->value); std::cerr << "Tried to extract float from non-float tag " << this->name << std::endl; throw;}
-    operator double() {if (this->type == TAG_DOUBLE) return std::get<double>(this->value); std::cerr << "Tried to extract double from non-double tag " << this->name << std::endl; throw;}
-    operator std::string() {if (this->type == TAG_STRING) return std::get<std::string>(this->value); std::cerr << "Tried to extract string from non-string tag " << this->name << std::endl; throw;}
-    operator std::vector<NBTTag>() {if (this->type == TAG_BYTEARRAY or this->type == TAG_INTARRAY or this->type == TAG_LONGARRAY or this->type == TAG_ARRAY or this->type == TAG_COMPOUND) return std::get<std::vector<NBTTag>>(this->value); std::cerr << "Tried to extract container from non-container tag " << this->name << std::endl; throw;}
+    NBTTag& operator[](const std::string& name);
+    NBTTag& operator[](std::size_t index);
+    template <NbtType T> T get() const;
+    bool contains(const std::string& key) const;
 };
 
 NBTTag::NBTTag(Tag type, std::string name, std::variant<std::vector<NBTTag>, char, short_t, int_t, long_t, float, double, std::string> value) : name(name), value(value), type(type) {}
@@ -422,22 +434,20 @@ std::string NBTTag::to_string(int tab_level) const {
     return out;
 }
 
-/// TODO: Why can I not just use a string?
-template <size_t Size> std::optional<NBTTag> NBTTag::operator[](const char (&name)[Size]) const {
+NBTTag& NBTTag::operator[](const std::string& name) {
     switch (this->type) {
         case TAG_COMPOUND: {
             std::vector<NBTTag> val = std::get<std::vector<NBTTag>>(this->value);
-            for (int i = 0; i < val.size(); ++i) if (val[i].name == name) return std::optional<NBTTag>(val[i]);
-            return std::optional<NBTTag>();
+            for (int i = 0; i < val.size(); ++i) if (val[i].name == name) return val[i];
+            throw std::runtime_error("Tried to get value by name" + name + " from tag " + this->name + ", but that value does not exist in the compound");
         }
         default: {
-            std::cerr << "Tried to get value by name " << name << " from tag " << this->name << ", but that tag is not a compound" << std::endl;
-            throw;
+            throw std::runtime_error("Tried to get value by name " + name + " from tag " + this->name + ", but that tag is not a compound");
         }
     }
 }
 
-std::optional<NBTTag> NBTTag::operator[](std::size_t index) const {
+NBTTag& NBTTag::operator[](std::size_t index) {
     switch (this->type) {
         case TAG_BYTEARRAY:
         case TAG_INTARRAY:
@@ -445,16 +455,66 @@ std::optional<NBTTag> NBTTag::operator[](std::size_t index) const {
         case TAG_ARRAY: {
             std::vector<NBTTag> val = std::get<std::vector<NBTTag>>(this->value);
             if (val.size() <= index) {
-                std::cerr << "Tried to get value by index " << std::to_string(index) << " from tag " << this->name << " which does not exist";
-                return std::optional<NBTTag>();
+                throw std::runtime_error("Tried to get value by index " + std::to_string(index) + " from tag " + this->name + " which does not exist");
             }
-            return std::optional<NBTTag>(val[index]);
+            return val[index];
         }
         default: {
-            std::cerr << "Tried to get value by index " << std::to_string(index) << " from tag " << this->name << ", but that tag is not an array";
-            throw;
+            throw std::runtime_error("Tried to get value by index " + std::to_string(index) + " from tag " + this->name + ", but that tag is not an array");
         }
     }
+}
+
+template <> byte_t NBTTag::get<byte_t>() const {
+    if (this->type == TAG_BYTE) return std::get<byte_t>(this->value);
+    throw std::runtime_error("Tried to extract byte from non-byte tag " + this->name);
+}
+template <> short_t NBTTag::get<short_t>() const {
+    if (this->type == TAG_SHORT) return std::get<short_t>(this->value);
+    throw std::runtime_error("Tried to extract short from non-short tag " + this->name);
+}
+template <> int_t NBTTag::get<int_t>() const {
+    if (this->type == TAG_INT) return std::get<int_t>(this->value);
+    throw std::runtime_error("Tried to extract int from non-int tag " + this->name);
+}
+template <> long_t NBTTag::get<long_t>() const {
+    if (this->type == TAG_LONG) return std::get<long_t>(this->value);
+    throw std::runtime_error("Tried to extract long from non-long tag " + this->name);
+}
+template <> float NBTTag::get<float>() const {
+    if (this->type == TAG_FLOAT) return std::get<float>(this->value);
+    throw std::runtime_error("Tried to extract float from non-float tag " + this->name);
+}
+template <> double NBTTag::get<double>() const {
+    if (this->type == TAG_DOUBLE) return std::get<double>(this->value);
+    throw std::runtime_error("Tried to extract double from non-double tag " + this->name);
+}
+template <> std::string NBTTag::get<std::string>() const {
+    if (this->type == TAG_STRING) return std::get<std::string>(this->value);
+    throw std::runtime_error("Tried to extract string from non-string tag " + this->name);
+}
+template <> std::vector<byte_t> NBTTag::get<std::vector<byte_t>>() const {
+    if (this->type == TAG_BYTEARRAY) return std::get<std::vector<byte_t>>(this->value);
+    throw std::runtime_error("Tried to extract byte array from non-byte-array tag " + this->name);
+}
+template <> std::vector<int_t> NBTTag::get<std::vector<int_t>>() const {
+    if (this->type == TAG_INTARRAY) return std::get<std::vector<int_t>>(this->value);
+    throw std::runtime_error("Tried to extract int array from non-int-array tag " + this->name);
+}
+template <> std::vector<long_t> NBTTag::get<std::vector<long_t>>() const {
+    if (this->type == TAG_LONGARRAY) return std::get<std::vector<long_t>>(this->value);
+    throw std::runtime_error("Tried to extract long array from non-long-array tag " + this->name);
+}
+template <> std::vector<NBTTag> NBTTag::get<std::vector<NBTTag>>() const {
+    if (this->type == TAG_ARRAY) return std::get<std::vector<NBTTag>>(this->value);
+    throw std::runtime_error("Tried to extract array from non-array tag " + this->name);
+}
+
+bool NBTTag::contains(const std::string& key) const {
+    if (this->type != TAG_COMPOUND)
+        throw std::runtime_error("Tried to use contains() on non-compound tag " + this->name);
+    return std::any_of(std::get<std::vector<NBTTag>>(this->value).begin(), std::get<std::vector<NBTTag>>(this->value).end(),
+        [key](const NBTTag& tag) { return tag.name == key; });
 }
 
 NBTTag readNbt(std::string path) {
