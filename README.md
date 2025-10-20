@@ -33,4 +33,4 @@ int main() {
 
 ## Credits
 
-GZip in the headers is from <https://github.com/mapbox/gzip-hpp> (if I remember correctly; it's been a while).
+GZip is from https://github.com/mapbox/gzip-hpp.

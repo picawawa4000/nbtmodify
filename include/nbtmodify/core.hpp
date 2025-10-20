@@ -14,7 +14,7 @@
 #include <optional>
 
 #include <zlib.h>
-#include "gzip/decompress.hpp"
+#include <gzip/decompress.hpp>
 
 #define ZLIB_CHUNK 131072UL
 
@@ -22,13 +22,15 @@ namespace nbt {
 
 struct NBTTag;
 
+// If these types won't compile on your machine (for some reason),
+// replace intX_t with int_fastX_t.
 typedef unsigned char byte_t;
-typedef __int16_t short_t;
-typedef __uint16_t ushort_t;
-typedef __int32_t int_t;
-typedef __uint32_t uint_t;
-typedef __int64_t long_t;
-typedef __uint64_t ulong_t;
+typedef int8_t short_t;
+typedef uint16_t ushort_t;
+typedef int32_t int_t;
+typedef uint32_t uint_t;
+typedef int64_t long_t;
+typedef uint64_t ulong_t;
 
 namespace internal {
 
@@ -47,7 +49,8 @@ enum {
 static const union { unsigned char bytes[4]; uint32_t value; } o32_host_order =
     { { 0, 1, 2, 3 } };
 
-#define O32_HOST_ORDER (o32_host_order.value)
+/// TODO: make an `is_little_endian` function
+#define O32_HOST_ORDER (::nbt::internal::o32_host_order.value)
 
 static auto current_time_millis() {return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());}
 
@@ -105,7 +108,7 @@ union Number {
 };
 
 //janky but functional
-static Number unpack(const byte_t bytes[], Tag code) {
+Number unpack(const byte_t bytes[], Tag code) {
     if (code == TAG_BYTE) {
         return {.b=(char)bytes[0]};
     } else if (code == TAG_SHORT) {
@@ -134,11 +137,50 @@ static Number unpack(const byte_t bytes[], Tag code) {
     throw;
 }
 
-static constexpr ulong_t get_mask(int byte_level) {
+Number read(std::istream& bytes, Tag code) {
+    Number ret;
+    if (code == TAG_BYTE) {
+        bytes.read(&ret.b, 1);
+    } else if (code == TAG_SHORT) {
+        bytes.read((char*)&ret.s, 2);
+        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+            ret.s = __builtin_bswap16(ret.s);
+    } else if (code == TAG_INT) {
+        bytes.read((char*)&ret.i, 4);
+        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+            ret.i = __builtin_bswap32(ret.i);
+    } else if (code == TAG_LONG) {
+        bytes.read((char*)&ret.l, 8);
+        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+            ret.l = __builtin_bswap64(ret.l);
+    } else if (code == TAG_FLOAT) {
+        bytes.read((char*)&ret.f, 4);
+        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+            // operate on ret.i instead of ret.f because both have the same number of bits
+            // and __builtin_bswap doesn't work on floats
+            ret.i = __builtin_bswap32(ret.i);
+    } else if (code == TAG_DOUBLE) {
+        bytes.read((char*)&ret.d, 8);
+        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+            ret.l == __builtin_bswap64(ret.l);
+    } else throw;
+    return ret;
+}
+
+std::string read_string(std::istream& bytes) {
+    std::string ret;
+    short_t len = internal::read(bytes, TAG_SHORT).s;
+    for (short_t i = 0; i < len; ++i)
+        ret.append("\0");
+    bytes.read(ret.data(), len);
+    return ret;
+}
+
+constexpr ulong_t get_mask(int byte_level) {
     return 255UL * (ulong_t)(pow(2, byte_level * 8));
 }
 
-static byte_t get_highest_byte(ulong_t byte_data) {
+byte_t get_highest_byte(ulong_t byte_data) {
     for (int i = 7; i >= 0; --i) if ((byte_data >> (i * 8)) != 0) return byte_data >> (i * 8);
     return 0;
 }
@@ -162,16 +204,19 @@ template <> constexpr bool is_nbt_type<NBTTag> = true;
 template <typename T> concept NbtType = internal::is_nbt_type<T>;
 
 struct NBTTag {
+    using DataType = std::variant<std::vector<NBTTag>,
+        std::vector<byte_t>, std::vector<int_t>, std::vector<long_t>,
+        char, short_t, int_t, long_t, float, double, std::string>;
+
     Tag type;
     std::string name;
-    std::variant<std::vector<NBTTag>, char, short_t, int_t, long_t, float, double, std::string> value;
+    DataType value;
 
     NBTTag() :  name(), value() {}
-    NBTTag(Tag type, std::string name, 
-             std::variant<std::vector<NBTTag>, char,
-                          short_t, int_t, long_t, float, double, std::string> value);
+    NBTTag(Tag type, std::string name, DataType value);
     ~NBTTag() {}
     static NBTTag from_nbt(std::vector<byte_t>::iterator& bytes, bool suppress_name = false, std::optional<byte_t> type_override = {});
+    static NBTTag from_nbt(std::istream& bytes, bool suppress_name = false, std::optional<byte_t> type_override = {});
     std::vector<byte_t> to_nbt();
     std::string to_string(int tab_level = 0) const;
     NBTTag& operator[](const std::string& name);
@@ -180,12 +225,13 @@ struct NBTTag {
     bool contains(const std::string& key) const;
 };
 
-NBTTag::NBTTag(Tag type, std::string name, std::variant<std::vector<NBTTag>, char, short_t, int_t, long_t, float, double, std::string> value) : name(name), value(value), type(type) {}
+NBTTag::NBTTag(Tag type, std::string name, DataType value) : name(name), value(value), type(type) {}
 
 NBTTag NBTTag::from_nbt(std::vector<byte_t>::iterator& bytes, bool suppress_name, std::optional<byte_t> type_override) {
+    /// TODO: update this function (see other overload)
     std::string name;
     short_t namelen;
-    std::variant<std::vector<NBTTag>, char, short_t, int_t, long_t, float, double, std::string> value;
+    DataType value;
     byte_t type;
     if (type_override) {
         type = type_override.value();
@@ -241,34 +287,26 @@ NBTTag NBTTag::from_nbt(std::vector<byte_t>::iterator& bytes, bool suppress_name
             break;
         }
         case TAG_BYTEARRAY: {
-            int length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
-            //std::cout << "namelen: " << namelen << " name: " << name << std::endl;
-            std::vector<NBTTag> out_values(length);
-            for (int i = 0; i < length; ++i) out_values[i] = NBTTag(TAG_BYTE, "", (char)(*bytes++)); //explicit constructor is quicker
-            value = out_values;
+            uint_t length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
+            value = std::vector<byte_t>(bytes, (bytes += length));
             break;
         }
         case TAG_INTARRAY: {
-            int length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
-            std::vector<NBTTag> out_values(length);
-            for (int i = 0; i < length; ++i) out_values[i] = NBTTag::from_nbt(bytes, true, {TAG_INT});
-            value = out_values;
+            uint_t length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
+            value = std::vector<int_t>(bytes, (bytes += length));
             break;
         }
         case TAG_LONGARRAY: {
-            int length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
-            std::vector<NBTTag> out_values(length);
-            for (int i = 0; i < length; ++i) out_values[i] = NBTTag::from_nbt(bytes, true, {TAG_LONG});;
-            value = out_values;
+            uint_t length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
+            value = std::vector<long_t>(bytes, (bytes += length));
             break;
         }
         case TAG_ARRAY: {
             byte_t type = *bytes++;
-            int length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
+            uint_t length = (*bytes++ << 24) + (*bytes++ << 16) + (*bytes++ << 8) + (*bytes++);
             std::vector<NBTTag> out_values(length);
-            if (length < 0) throw;
             if (length == 0) out_values = {};
-            if (length > 0) for (int i = 0; i < length; ++i) out_values[i] = NBTTag::from_nbt(bytes, true, {type});
+            else for (int i = 0; i < length; ++i) out_values[i] = NBTTag::from_nbt(bytes, true, {type});
             value = out_values;
             break;
         }
@@ -288,6 +326,96 @@ NBTTag NBTTag::from_nbt(std::vector<byte_t>::iterator& bytes, bool suppress_name
         }
     }
     return NBTTag((Tag)type, name, value);
+}
+
+NBTTag NBTTag::from_nbt(std::istream& bytes, bool suppress_name, std::optional<byte_t> type_override) {
+    NBTTag ret;
+
+    if (type_override)
+        ret.type = static_cast<Tag>(type_override.value());
+    else
+        ret.type = static_cast<Tag>(internal::read(bytes, TAG_BYTE).b);
+
+    if (!suppress_name)
+        ret.name = internal::read_string(bytes);
+
+    switch (ret.type) {
+        case TAG_BYTE: {
+            ret.value = internal::read(bytes, TAG_BYTE).b;
+            break;
+        }
+        case TAG_SHORT: {
+            ret.value = internal::read(bytes, TAG_SHORT).s;
+            break;
+        }
+        case TAG_INT: {
+            ret.value = internal::read(bytes, TAG_INT).i;
+            break;
+        }
+        case TAG_LONG: {
+            ret.value = internal::read(bytes, TAG_LONG).l;
+            break;
+        }
+        case TAG_FLOAT: {
+            ret.value = internal::read(bytes, TAG_FLOAT).f;
+            break;
+        }
+        case TAG_DOUBLE: {
+            ret.value = internal::read(bytes, TAG_DOUBLE).d;
+            break;
+        }
+        case TAG_STRING: {
+            ret.value = internal::read_string(bytes);
+            break;
+        }
+        case TAG_BYTEARRAY: {
+            int_t length = internal::read(bytes, TAG_INT).i;
+            std::vector<byte_t> out_values(length);
+            bytes.read((char*)out_values.data(), length);
+            break;
+        }
+        case TAG_INTARRAY: {
+            int_t length = internal::read(bytes, TAG_INT).i;
+            std::vector<int_t> out_values(length);
+            bytes.read((char*)out_values.data(), length * sizeof(int_t));
+            if (O32_HOST_ORDER == internal::O32_LITTLE_ENDIAN)
+                for (int_t& val : out_values)
+                    val = __builtin_bswap32(val);
+            break;
+        }
+        case TAG_LONGARRAY: {
+            int_t length = internal::read(bytes, TAG_INT).i;
+            std::vector<long_t> out_values(length);
+            bytes.read((char*)out_values.data(), length * sizeof(long_t));
+            if (O32_HOST_ORDER == internal::O32_LITTLE_ENDIAN)
+                for (long_t& val : out_values)
+                    val = __builtin_bswap64(val);
+            break;
+        }
+        case TAG_ARRAY: {
+            byte_t type = internal::read(bytes, TAG_BYTE).b;
+            uint_t length = internal::read(bytes, TAG_INT).i;
+            std::vector<NBTTag> out_values(length);
+            if (length == 0) out_values = {};
+            if (length > 0) for (int i = 0; i < length; ++i) out_values[i] = NBTTag::from_nbt(bytes, true, {type});
+            ret.value = out_values;
+            break;
+        }
+        case TAG_COMPOUND: {
+            std::vector<NBTTag> out_values;
+            byte_t nextType = internal::read(bytes, TAG_BYTE).b;
+            while (nextType != TAG_END) {
+                out_values.push_back(NBTTag::from_nbt(bytes, false, {nextType}));
+                nextType = internal::read(bytes, TAG_BYTE).b;
+            }
+            ret.value = out_values;
+            break;
+        }
+        default: {
+            throw std::runtime_error("Found illegal type " + std::to_string(ret.type));
+        }
+    }
+    return ret;
 }
 
 std::vector<byte_t> NBTTag::to_nbt() {
@@ -519,9 +647,11 @@ bool NBTTag::contains(const std::string& key) const {
 
 NBTTag readNbt(std::string path) {
     std::ifstream input(path, std::ios::binary);
-    std::vector<byte_t> data(std::istreambuf_iterator<char>(input), {});
-    auto iter = data.begin();
-    return NBTTag::from_nbt(iter);
+    return NBTTag::from_nbt(input);
+}
+
+NBTTag readNbt(std::istream& stream) {
+    return NBTTag::from_nbt(stream);
 }
 
 NBTTag readNbtGzip(std::string path, bool print = false) {
@@ -534,7 +664,7 @@ NBTTag readNbtGzip(std::string path, bool print = false) {
     return NBTTag::from_nbt(iter);
 }
 
-NBTTag readNbtBytesZlib(std::vector<byte_t> bytes, bool print = false) {
+NBTTag readNbtBytesZlib(std::vector<byte_t>& bytes, bool print = false) {
     std::vector<byte_t> decompressed_bytes;
     decompressed_bytes.reserve(16384);
     z_stream zlibstream{.opaque=Z_NULL, .zalloc=Z_NULL, .zfree=Z_NULL, .avail_in=0, .next_in=Z_NULL};
