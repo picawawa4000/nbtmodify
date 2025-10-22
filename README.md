@@ -4,11 +4,13 @@ NBTModify is an old program of mine to read and write files in Minecraft's NBT (
 
 ## Functionality
 
-Currently, only reading from raw NBT files (compressed with GZip or Zlib, or uncompressed) and Anvil (region) files is supported. Writing is not supported, but may be implemented in the near future. (After all, I can't call it "NBT*Modify*" if the NBT can't actually be modified...)
+Currently, reading and writing from raw NBT files (compressed with GZip or Zlib, or uncompressed) and Anvil (region) files is supported.
+
+Uploading of regional NBT tags to MCLevel `Level`s is to be implemented.
 
 ## Installation
 
-NBTModify is header-only. Just make sure that you have a working Zlib installation somewhere that NBTModify can find. GZip is included in the `include` directory.
+NBTModify is header-only. Just make sure that you have a working Zlib and Boost installation somewhere that NBTModify can find.
 
 ## Usage
 
@@ -19,7 +21,7 @@ NBTModify is header-only. Just make sure that you have a working Zlib installati
 
 int main() {
     // Read NBT data
-    nbt::NBTTag root = nbt::readNbtGzip("path/to/NBT/file");
+    nbt::NBTTag root = nbt::read_nbt_gzip("path/to/NBT/file");
     // Pretty-print to cout
     std::cout << root.to_string() << std::endl;
     // Access member of compound tag
@@ -33,4 +35,4 @@ int main() {
 
 ## Credits
 
-GZip is from https://github.com/mapbox/gzip-hpp.
+Boost: <https://boost.org> (also download link if you don't already have it)

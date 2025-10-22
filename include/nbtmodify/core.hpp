@@ -13,10 +13,12 @@
 #include <bitset>
 #include <optional>
 
-#include <zlib.h>
-#include <gzip/decompress.hpp>
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
 
-#define ZLIB_CHUNK 131072UL
+/// TODO: convert all `std::runtime_error`s into a custom argument type (maybe `nbt::runtime_error`?)
 
 namespace nbt {
 
@@ -46,15 +48,19 @@ enum {
     O32_HONEYWELL_ENDIAN = 0x02030001ul /* Honeywell 316 (aka ENDIAN_BIG_WORD) */
 };
 
-static const union { unsigned char bytes[4]; uint32_t value; } o32_host_order =
+static constexpr union { unsigned char bytes[4]; uint32_t value; } o32_host_order =
     { { 0, 1, 2, 3 } };
 
 /// TODO: make an `is_little_endian` function
-#define O32_HOST_ORDER (::nbt::internal::o32_host_order.value)
+#define O32_HOST_ORDER o32_host_order.value
 
-static auto current_time_millis() {return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());}
+bool is_little_endian() {
+    return is_little_endian();
+}
 
-template <typename T> static void print_bytes(std::vector<T> data) {
+auto current_time_millis() {return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());}
+
+template <typename T> void print_bytes(std::vector<T> data) {
     std::cout << "[";
     for (int i = 0; i < data.size(); ++i) std::cout << data[i];
     std::cout << "]" << std::endl;
@@ -112,20 +118,20 @@ Number unpack(const byte_t bytes[], Tag code) {
     if (code == TAG_BYTE) {
         return {.b=(char)bytes[0]};
     } else if (code == TAG_SHORT) {
-        if (O32_HOST_ORDER == O32_BIG_ENDIAN)
+        if (!is_little_endian())
             return {.s=*((short_t*)bytes)};
         return {.s=(short_t)((short_t)bytes[0] << 8 | bytes[1])};
     } else if (code == TAG_INT) {
-        if (O32_HOST_ORDER == O32_BIG_ENDIAN)
+        if (!is_little_endian())
             return {.i=*((int_t*)bytes)};
         return {.i=(int_t)((int_t)bytes[0] << 24 | (int_t)bytes[1] << 16 | (int_t)bytes[2] << 8 | bytes[3])};
     } else if (code == TAG_LONG) {
-        if (O32_HOST_ORDER == O32_BIG_ENDIAN)
+        if (!is_little_endian())
             return {.l=*((long_t*)bytes)};
         return {.l=(long_t)((long_t)bytes[0] << 56 | (long_t)bytes[1] << 48 | (long_t)bytes[2] << 40 | (long_t)bytes[3] << 32 | (long_t)bytes[4] << 24 | (long_t)bytes[5] << 16 | (long_t)bytes[6] << 8 | (long_t)bytes[7])};
     } else if (code == TAG_FLOAT) {
         float out;
-        int_t in = bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3];
+        int_t in = (int_t)(bytes[0]) << 24 | (int_t)(bytes[1]) << 16 | (int_t)(bytes[2]) << 8 | bytes[3];
         std::memcpy(&out, &in, sizeof(in));
         return {.f=out};
     } else if (code == TAG_DOUBLE) {
@@ -143,28 +149,76 @@ Number read(std::istream& bytes, Tag code) {
         bytes.read(&ret.b, 1);
     } else if (code == TAG_SHORT) {
         bytes.read((char*)&ret.s, 2);
-        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+        if (is_little_endian())
             ret.s = __builtin_bswap16(ret.s);
     } else if (code == TAG_INT) {
         bytes.read((char*)&ret.i, 4);
-        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+        if (is_little_endian())
             ret.i = __builtin_bswap32(ret.i);
     } else if (code == TAG_LONG) {
         bytes.read((char*)&ret.l, 8);
-        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+        if (is_little_endian())
             ret.l = __builtin_bswap64(ret.l);
     } else if (code == TAG_FLOAT) {
         bytes.read((char*)&ret.f, 4);
-        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+        if (is_little_endian())
             // operate on ret.i instead of ret.f because both have the same number of bits
             // and __builtin_bswap doesn't work on floats
             ret.i = __builtin_bswap32(ret.i);
     } else if (code == TAG_DOUBLE) {
         bytes.read((char*)&ret.d, 8);
-        if (O32_HOST_ORDER == O32_LITTLE_ENDIAN)
+        if (is_little_endian())
             ret.l == __builtin_bswap64(ret.l);
     } else throw;
     return ret;
+}
+// write byte
+void writeb(std::ostream& bytes, char num) {
+    bytes.write(&num, 1);
+}
+// write short
+void writes(std::ostream& bytes, short_t num) {
+    if (is_little_endian())
+        num = __builtin_bswap16(num);
+    bytes.write((char*)&num, 2);
+}
+// write int
+void writei(std::ostream& bytes, int_t num) {
+    if (is_little_endian())
+        num = __builtin_bswap32(num);
+    bytes.write((char*)&num, 4);
+}
+// write long
+void writel(std::ostream& bytes, long_t num) {
+    if (is_little_endian())
+        num = __builtin_bswap64(num);
+    bytes.write((char*)&num, 8);
+}
+// write float
+void writef(std::ostream& bytes, float num) {
+    uint_t num_bytes;
+    if (is_little_endian())
+        num_bytes = __builtin_bswap32(std::bit_cast<uint_t>(num));
+    else
+        num_bytes = std::bit_cast<uint_t>(num);
+    bytes.write((char*)&num_bytes, 4);
+}
+// write double
+void writed(std::ostream& bytes, double num) {
+    ulong_t num_bytes;
+    if (is_little_endian())
+        num_bytes = __builtin_bswap64(std::bit_cast<ulong_t>(num));
+    else
+        num_bytes = std::bit_cast<ulong_t>(num);
+    bytes.write((char*)&num_bytes, 8);
+}
+// write string
+void writestr(std::ostream& bytes, const std::string& string) {
+    short_t name_length = string.size();
+    writes(bytes, name_length);
+    /// TODO: does this output any potential null termination characters (\0)?
+    /// I don't think so but might be worthwhile to figure it out
+    bytes << string;
 }
 
 std::string read_string(std::istream& bytes) {
@@ -217,9 +271,24 @@ struct NBTTag {
     ~NBTTag() {}
     static NBTTag from_nbt(std::vector<byte_t>::iterator& bytes, bool suppress_name = false, std::optional<byte_t> type_override = {});
     static NBTTag from_nbt(std::istream& bytes, bool suppress_name = false, std::optional<byte_t> type_override = {});
-    std::vector<byte_t> to_nbt();
+    std::vector<byte_t> to_nbt() const;
+    void to_nbt(std::ostream& stream) const;
+    /// @brief Pretty-print this tag.
+    /// @param tab_level The number of `\t` characters to insert before every line. Used internally to tabulate lines. When a value is supplied externally, every line will be indented this many times on top of normal tabulation.
+    /// @return A string representing this tag.
     std::string to_string(int tab_level = 0) const;
+    /// @brief Compound tag element access. Will throw if `this` is not a compound tag.
+    /// @param name The name of the element to access.
+    /// @return An element with name `name`. Will create it (with value 0b) if no such element exists.
+    /// @sa NBTTag::at(const std::string&)
     NBTTag& operator[](const std::string& name);
+    /// @brief Compound tag element access. Will throw if `this` is not a compound tag.
+    /// @param name The name of the element to access.
+    /// @return An element with name `name`. Will throw if no such element exists.
+    NBTTag& at(const std::string& name);
+    /// @brief Array tag element access. Will throw if `this` is not an array tag.
+    /// @param index The index of the element to access.
+    /// @return An element with index `index`. Will throw if no such element exists.
     NBTTag& operator[](std::size_t index);
     template <NbtType T> T get() const;
     bool contains(const std::string& key) const;
@@ -327,7 +396,6 @@ NBTTag NBTTag::from_nbt(std::vector<byte_t>::iterator& bytes, bool suppress_name
     }
     return NBTTag((Tag)type, name, value);
 }
-
 NBTTag NBTTag::from_nbt(std::istream& bytes, bool suppress_name, std::optional<byte_t> type_override) {
     NBTTag ret;
 
@@ -378,7 +446,7 @@ NBTTag NBTTag::from_nbt(std::istream& bytes, bool suppress_name, std::optional<b
             int_t length = internal::read(bytes, TAG_INT).i;
             std::vector<int_t> out_values(length);
             bytes.read((char*)out_values.data(), length * sizeof(int_t));
-            if (O32_HOST_ORDER == internal::O32_LITTLE_ENDIAN)
+            if (internal::is_little_endian())
                 for (int_t& val : out_values)
                     val = __builtin_bswap32(val);
             break;
@@ -387,7 +455,7 @@ NBTTag NBTTag::from_nbt(std::istream& bytes, bool suppress_name, std::optional<b
             int_t length = internal::read(bytes, TAG_INT).i;
             std::vector<long_t> out_values(length);
             bytes.read((char*)out_values.data(), length * sizeof(long_t));
-            if (O32_HOST_ORDER == internal::O32_LITTLE_ENDIAN)
+            if (internal::is_little_endian())
                 for (long_t& val : out_values)
                     val = __builtin_bswap64(val);
             break;
@@ -418,7 +486,7 @@ NBTTag NBTTag::from_nbt(std::istream& bytes, bool suppress_name, std::optional<b
     return ret;
 }
 
-std::vector<byte_t> NBTTag::to_nbt() {
+std::vector<byte_t> NBTTag::to_nbt() const {
     std::vector<byte_t> nbt;
     nbt.push_back(type);
     short_t name_length = (short_t)(name.length());
@@ -526,17 +594,99 @@ std::vector<byte_t> NBTTag::to_nbt() {
     }
     return nbt;
 }
+void NBTTag::to_nbt(std::ostream& stream) const {
+    internal::writeb(stream, this->type);
+    internal::writestr(stream, this->name);
+    switch (this->type) {
+        case TAG_BYTE: {
+            internal::writeb(stream, std::get<char>(this->value));
+            break;
+        }
+        case TAG_SHORT: {
+            internal::writes(stream, std::get<short_t>(this->value));
+            break;
+        }
+        case TAG_INT: {
+            internal::writei(stream, std::get<int_t>(this->value));
+            break;
+        }
+        case TAG_LONG: {
+            internal::writel(stream, std::get<long_t>(this->value));
+            break;
+        }
+        case TAG_FLOAT: {
+            internal::writef(stream, std::get<float>(this->value));
+            break;
+        }
+        case TAG_DOUBLE: {
+            internal::writed(stream, std::get<double>(this->value));
+            break;
+        }
+        case TAG_STRING: {
+            internal::writestr(stream, std::get<std::string>(this->value));
+            break;
+        }
+        case TAG_BYTEARRAY: {
+            std::vector<byte_t> real_value = std::get<std::vector<byte_t>>(this->value);
+            uint_t size = real_value.size();
+            internal::writei(stream, size);
+            for (byte_t byte : real_value)
+                internal::writeb(stream, byte);
+            break;
+        }
+        case TAG_INTARRAY: {
+            std::vector<int_t> real_value = std::get<std::vector<int_t>>(this->value);
+            uint_t size = real_value.size();
+            internal::writei(stream, size);
+            for (int_t byte : real_value)
+                internal::writei(stream, byte);
+            break;
+        }
+        case TAG_LONGARRAY: {
+            std::vector<long_t> real_value = std::get<std::vector<long_t>>(this->value);
+            uint_t size = real_value.size();
+            internal::writei(stream, size);
+            for (long_t byte : real_value)
+                internal::writel(stream, byte);
+            break;
+        }
+        case TAG_ARRAY: {
+            std::vector<NBTTag> real_value = std::get<std::vector<NBTTag>>(value);
+            byte_t tag_byte;
+            uint_t size = real_value.size();
+            if (size > 0)
+                tag_byte = real_value[0].type;
+            else
+                tag_byte = TAG_END;
+            internal::writeb(stream, tag_byte);
+            internal::writei(stream, size);
+            for (const NBTTag& tag : real_value) {
+                if (tag.type != tag_byte) throw;
+                tag.to_nbt(stream);
+            }
+            break;
+        }
+        case TAG_COMPOUND: {
+            std::vector<NBTTag> real_value = std::get<std::vector<NBTTag>>(value);
+            for (const NBTTag& tag : real_value)
+                tag.to_nbt(stream);
+            internal::writeb(stream, TAG_END);
+            break;
+        }
+        default: throw;
+    }
+}
 
 std::string NBTTag::to_string(int tab_level) const {
     std::string out;
     for (int i = 0; i < tab_level; ++i) out += "\t";
     switch (this->type) {
-        case TAG_BYTE: out += std::to_string(std::get<char>(this->value)); break;
-        case TAG_SHORT: out += std::to_string(std::get<short>(this->value)); break;
-        case TAG_INT: out += std::to_string(std::get<int_t>(this->value)); break;
-        case TAG_LONG: out += std::to_string(std::get<long_t>(this->value)); break;
-        case TAG_FLOAT: out += std::to_string(std::get<float>(this->value)); break;
-        case TAG_DOUBLE: out += std::to_string(std::get<double>(this->value)); break;
+        case TAG_BYTE: out += std::to_string(std::get<char>(this->value)) + "b"; break;
+        case TAG_SHORT: out += std::to_string(std::get<short>(this->value)) + "s"; break;
+        case TAG_INT: out += std::to_string(std::get<int_t>(this->value)) + "i"; break;
+        case TAG_LONG: out += std::to_string(std::get<long_t>(this->value)) + "l"; break;
+        case TAG_FLOAT: out += std::to_string(std::get<float>(this->value)) + "f"; break;
+        case TAG_DOUBLE: out += std::to_string(std::get<double>(this->value)) + "d"; break;
         case TAG_STRING: out += "\"" + std::get<std::string>(this->value) + "\""; break;
         case TAG_BYTEARRAY:
         case TAG_INTARRAY:
@@ -564,17 +714,26 @@ std::string NBTTag::to_string(int tab_level) const {
 
 NBTTag& NBTTag::operator[](const std::string& name) {
     switch (this->type) {
-        case TAG_COMPOUND: {
-            std::vector<NBTTag> val = std::get<std::vector<NBTTag>>(this->value);
-            for (int i = 0; i < val.size(); ++i) if (val[i].name == name) return val[i];
-            throw std::runtime_error("Tried to get value by name" + name + " from tag " + this->name + ", but that value does not exist in the compound");
-        }
-        default: {
-            throw std::runtime_error("Tried to get value by name " + name + " from tag " + this->name + ", but that tag is not a compound");
-        }
+    case TAG_COMPOUND: {
+        std::vector<NBTTag> val = std::get<std::vector<NBTTag>>(this->value);
+        for (int i = 0; i < val.size(); ++i) if (val[i].name == name) return val[i];
+        std::get<std::vector<NBTTag>>(this->value).emplace_back(TAG_BYTE, name, 0);
+    }
+    default:
+        throw std::runtime_error("Tried to get value by name " + name + " from tag " + this->name + ", but that tag is not a compound");
     }
 }
-
+NBTTag& NBTTag::at(const std::string& name) {
+    switch (this->type) {
+    case TAG_COMPOUND: {
+        std::vector<NBTTag> val = std::get<std::vector<NBTTag>>(this->value);
+        for (int i = 0; i < val.size(); ++i) if (val[i].name == name) return val[i];
+        throw std::runtime_error("Tried to get value by name" + name + " from tag " + this->name + ", but that value does not exist in the compound");
+    }
+    default:
+        throw std::runtime_error("Tried to get value by name " + name + " from tag " + this->name + ", but that tag is not a compound");
+    }
+}
 NBTTag& NBTTag::operator[](std::size_t index) {
     switch (this->type) {
         case TAG_BYTEARRAY:
@@ -645,70 +804,70 @@ bool NBTTag::contains(const std::string& key) const {
         [key](const NBTTag& tag) { return tag.name == key; });
 }
 
-NBTTag readNbt(std::string path) {
+NBTTag read_nbt_gzip(const std::string& path) {
     std::ifstream input(path, std::ios::binary);
-    return NBTTag::from_nbt(input);
+    boost::iostreams::filtering_istreambuf buf;
+    buf.push(boost::iostreams::gzip_decompressor());
+    buf.push(input);
+    std::istream gzstream(&buf);
+    return NBTTag::from_nbt(gzstream);
+}
+NBTTag read_nbt_gzip(std::istream& stream) {
+    boost::iostreams::filtering_istreambuf buf;
+    buf.push(boost::iostreams::gzip_decompressor());
+    buf.push(stream);
+    std::istream gzstream(&buf);
+    return NBTTag::from_nbt(gzstream);
 }
 
-NBTTag readNbt(std::istream& stream) {
-    return NBTTag::from_nbt(stream);
-}
-
-NBTTag readNbtGzip(std::string path, bool print = false) {
+NBTTag read_nbt_zlib(const std::string& path) {
     std::ifstream input(path, std::ios::binary);
-    std::vector<char> data(std::istreambuf_iterator<char>(input), {});
-    std::string textdata = gzip::decompress(&data[0], data.size());
-    std::vector<byte_t> realdata(textdata.begin(), textdata.end());
-    if (print) internal::print_bytes(realdata);
-    auto iter = realdata.begin();
-    return NBTTag::from_nbt(iter);
+    boost::iostreams::filtering_istreambuf buf;
+    buf.push(boost::iostreams::zlib_decompressor());
+    buf.push(input);
+    std::istream gzstream(&buf);
+    return NBTTag::from_nbt(gzstream);
+}
+NBTTag read_nbt_zlib(std::istream& stream) {
+    boost::iostreams::filtering_istreambuf buf;
+    buf.push(boost::iostreams::zlib_decompressor());
+    buf.push(stream);
+    std::istream gzstream(&buf);
+    return NBTTag::from_nbt(gzstream);
 }
 
-NBTTag readNbtBytesZlib(std::vector<byte_t>& bytes, bool print = false) {
-    std::vector<byte_t> decompressed_bytes;
-    decompressed_bytes.reserve(16384);
-    z_stream zlibstream{.opaque=Z_NULL, .zalloc=Z_NULL, .zfree=Z_NULL, .avail_in=0, .next_in=Z_NULL};
-    std::size_t idx = 0;
-    int ret = inflateInit(&zlibstream);
-    if (ret != Z_OK) {
-        std::cerr << "Zlib decompression failed to init with code: " << ret << std::endl;
-        throw;
-    }
-    do {
-        if (bytes.size() <= idx) break;
-        zlibstream.avail_in = std::min(ZLIB_CHUNK, bytes.size() - idx);
-        if (zlibstream.avail_in == 0) break;
-        zlibstream.next_in = (byte_t*)&bytes[idx];
-        do {
-            std::array<byte_t, ZLIB_CHUNK> zlib_next_chunk;
-            zlibstream.avail_out = ZLIB_CHUNK;
-            zlibstream.next_out = zlib_next_chunk.begin();
-            ret = inflate(&zlibstream, Z_NO_FLUSH);
-            assert(ret != Z_STREAM_ERROR);
-            switch (ret) {
-                case Z_NEED_DICT: {ret = Z_DATA_ERROR;}
-                case Z_DATA_ERROR:
-                case Z_MEM_ERROR: {
-                    (void)inflateEnd(&zlibstream);
-                    std::cerr << "Zlib decompression failed with code: " << ret << std::endl;
-                    throw;
-                }
-            }
-            decompressed_bytes.insert(decompressed_bytes.end(), zlib_next_chunk.begin(), zlib_next_chunk.end()); //ungodly slow sometimes
-        } while (zlibstream.avail_out == 0);
-        idx += ZLIB_CHUNK;
-    } while (ret != Z_STREAM_END);
-    inflateEnd(&zlibstream);
-    if (print) internal::print_bytes(decompressed_bytes);
-    auto iter = decompressed_bytes.begin();
-    return NBTTag::from_nbt(iter);
+void write_nbt_gzip(const std::string& path, const NBTTag& tag) {
+    std::ofstream input(path, std::ios::binary);
+    boost::iostreams::filtering_ostreambuf buf;
+    buf.push(boost::iostreams::gzip_compressor());
+    buf.push(input);
+    std::ostream gzstream(&buf);
+    tag.to_nbt(gzstream);
+}
+void write_nbt_gzip(std::ostream& stream, const NBTTag& tag) {
+    boost::iostreams::filtering_ostreambuf buf;
+    buf.push(boost::iostreams::gzip_compressor());
+    buf.push(stream);
+    std::ostream gzstream(&buf);
+    tag.to_nbt(gzstream);
 }
 
-NBTTag readNbtZlib(std::string path) {
-    std::ifstream input(path, std::ios::binary);
-    std::vector<byte_t> data(std::istreambuf_iterator<char>(input), {});
-    return readNbtBytesZlib(data);
+void write_nbt_zlib(const std::string& path, const NBTTag& tag) {
+    std::ofstream input(path, std::ios::binary);
+    boost::iostreams::filtering_ostreambuf buf;
+    buf.push(boost::iostreams::zlib_compressor());
+    buf.push(input);
+    std::ostream zstream(&buf);
+    tag.to_nbt(zstream);
 }
+void write_nbt_zlib(std::ostream& stream, const NBTTag& tag) {
+    boost::iostreams::filtering_ostreambuf buf;
+    buf.push(boost::iostreams::zlib_compressor());
+    buf.push(stream);
+    std::ostream zstream(&buf);
+    tag.to_nbt(zstream);
+}
+
 
 }
 
