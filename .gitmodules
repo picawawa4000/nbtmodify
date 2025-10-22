@@ -1,6 +1,3 @@
-[submodule "submodules/gzip-hpp"]
-	path = submodules/gzip-hpp
-	url = https://github.com/mapbox/gzip-hpp
 [submodule "submodules/mclevel"]
 	path = submodules/mclevel
 	url = https://github.com/picawawa4000/mclevel
