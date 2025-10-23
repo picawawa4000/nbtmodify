@@ -285,11 +285,17 @@ struct NBTTag {
     /// @brief Compound tag element access. Will throw if `this` is not a compound tag.
     /// @param name The name of the element to access.
     /// @return An element with name `name`. Will throw if no such element exists.
-    NBTTag& at(const std::string& name);
+    NBTTag& at(const std::string& name) const;
     /// @brief Array tag element access. Will throw if `this` is not an array tag.
     /// @param index The index of the element to access.
     /// @return An element with index `index`. Will throw if no such element exists.
-    NBTTag& operator[](std::size_t index);
+    NBTTag& operator[](std::size_t index) const;
+    /// @brief Gets the value of this tag.
+    /// @tparam T The type to get the value of this tag as.
+    /// @return The value of this tag.
+    /// @note Implemented using template specialisations that will throw if the tag is not of the correct type.
+    /// This means that, for example, `get<int_t>` should NOT be called if `this.type` is `TAG_BYTE`.
+    /// In that case, call `get<byte_t>` and use a cast instead.
     template <NbtType T> T get() const;
     bool contains(const std::string& key) const;
 };
@@ -723,7 +729,7 @@ NBTTag& NBTTag::operator[](const std::string& name) {
         throw std::runtime_error("Tried to get value by name " + name + " from tag " + this->name + ", but that tag is not a compound");
     }
 }
-NBTTag& NBTTag::at(const std::string& name) {
+NBTTag& NBTTag::at(const std::string& name) const {
     switch (this->type) {
     case TAG_COMPOUND: {
         std::vector<NBTTag> val = std::get<std::vector<NBTTag>>(this->value);
@@ -734,7 +740,7 @@ NBTTag& NBTTag::at(const std::string& name) {
         throw std::runtime_error("Tried to get value by name " + name + " from tag " + this->name + ", but that tag is not a compound");
     }
 }
-NBTTag& NBTTag::operator[](std::size_t index) {
+NBTTag& NBTTag::operator[](std::size_t index) const {
     switch (this->type) {
         case TAG_BYTEARRAY:
         case TAG_INTARRAY:

@@ -162,6 +162,65 @@ void write_region_file(const std::string& path, const std::array<NBTTag, 1024>& 
     file.write((char*)locations.data(), 4096);
 }
 
+namespace internal {
+
+PalettedContainer<BlockState> load_block_states(const NBTTag& tag) {
+    /// ...
+}
+PalettedContainer<Biome> load_biomes(const NBTTag& tag) {
+    /// ...
+}
+
+std::function<void(Chunk&)> create_chunk_load_task(const NBTTag& tag) {
+    return [&tag](Chunk& chunk) {
+        NBTTag sections = tag.at("sections");
+        for (std::size_t i = 0; i < 24; ++i) {
+            NBTTag section_tag = sections[i];
+            byte_t y = section_tag.at("y").get<byte_t>();
+            chunk.get_section(y) = Section(load_block_states(section_tag.at("block_states")), load_biomes(section_tag.at("biomes")));
+        }
+    };
+}
+
+}
+
+/// @brief Loads a region file into a level.
+/// @param level The level to load the chunks into.
+/// @param region_pos The position of the region in the file (`chunk_pos / 32` in both axes).
+/// @param filepath The path to the region file.
+/// @note Does not block. Only creates the tasks.
+/// Use `Level.block()` to ensure that the tasks get finished before these chunks are used.
+void load_region_file(Level& level, ChunkPos region_pos, const std::string& filepath) {
+    std::array<NBTTag, 1024> tags = read_region_file(filepath);
+    for (std::size_t i = 0; i < 1024; ++i) {
+        /// ...
+    }
+}
+
+/// @brief Stores chunks in a level into a region file.
+/// @param level The level to get the chunks from.
+/// @param region_pos The region position in the world (`chunk_pos / 32` in both axes).
+/// @param filepath The path to the file to store the chunks into.
+void store_region_file(Level& level, ChunkPos region_pos, const std::string& filepath) {
+    /// ...
+}
+
+/// @brief Stores all chunks in a level into a region file.
+/// @param level The level to get the chunks from.
+/// @param region_dir_path The path to the directory to store the chunks in.
+void store_all(Level& level, const std::string& region_dir_path) {
+    /// ...
+}
+
+/// @brief Writes a single chunk to a region file.
+/// @param path The path to the region file to write the chunk to.
+/// @param chunk_tag The chunk's NBT data.
+/// @param pos The position of the chunk.
+/// @param scheme The compression scheme to use for the chunk.
+void write_chunk(const std::string& path, const NBTTag& chunk_tag, ChunkPos pos, CompressionScheme scheme = ZLIB) {
+    /// ...
+}
+
 }
 
 #endif
