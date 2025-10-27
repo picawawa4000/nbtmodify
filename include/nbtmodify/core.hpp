@@ -263,6 +263,8 @@ struct NBTTag {
         char, short_t, int_t, long_t, float, double, std::string>;
 
     Tag type;
+    /// @todo Switch this for a map in the DataType definition
+    /// (that would speed up access dramatically and make some other QOL changes possible)
     std::string name;
     DataType value;
 
@@ -296,7 +298,17 @@ struct NBTTag {
     /// @note Implemented using template specialisations that will throw if the tag is not of the correct type.
     /// This means that, for example, `get<int_t>` should NOT be called if `this.type` is `TAG_BYTE`.
     /// In that case, call `get<byte_t>` and use a cast instead.
+    /// This also means that `get<builtin_int_type>` should not be called. Only use NBT types.
+    /// (This will cause a compilation error if violated.)
     template <NbtType T> T get() const;
+    /// @brief Gets the size of this array tag.
+    /// @return The size of this array tag.
+    /// @exception Throws if `this.type` is not one of `TAG_BYTEARRAY`, `TAG_INTARRAY`, `TAG_LONGARRAY`, or `TAG_ARRAY`.
+    std::size_t size() const;
+    /// @brief Returns whether this compound tag contains the given key.
+    /// @param key The key.
+    /// @return Whether this tag contains the key.
+    /// @exception Throws if `this.type` is not `TAG_COMPOUND`.
     bool contains(const std::string& key) const;
 };
 
@@ -802,6 +814,8 @@ template <> std::vector<NBTTag> NBTTag::get<std::vector<NBTTag>>() const {
     if (this->type == TAG_ARRAY) return std::get<std::vector<NBTTag>>(this->value);
     throw std::runtime_error("Tried to extract array from non-array tag " + this->name);
 }
+
+std::size_t NBTTag::size() const {}
 
 bool NBTTag::contains(const std::string& key) const {
     if (this->type != TAG_COMPOUND)

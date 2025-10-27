@@ -164,16 +164,48 @@ void write_region_file(const std::string& path, const std::array<NBTTag, 1024>& 
 
 namespace internal {
 
-PalettedContainer<BlockState> load_block_states(const NBTTag& tag) {
-    /// ...
-}
-PalettedContainer<Biome> load_biomes(const NBTTag& tag) {
-    /// ...
+std::unordered_map<std::string, std::string> get_properties(const NBTTag& properties_tag) {
+    std::vector<NBTTag> subtags = properties_tag.get<std::vector<NBTTag>>();
+    std::unordered_map<std::string, std::string> ret;
+    ret.reserve(subtags.size());
+    for (const NBTTag& tag : subtags)
+        ret[tag.name] = tag.get<std::string>();
+    return ret;
 }
 
-std::function<void(Chunk&)> create_chunk_load_task(const NBTTag& tag) {
-    return [&tag](Chunk& chunk) {
-        NBTTag sections = tag.at("sections");
+PalettedContainer<BlockState> load_block_states(const NBTTag& block_states_tag) {
+    NBTTag raw_palette = block_states_tag.at("palette");
+    std::vector<BlockState> palette;
+    palette.reserve(raw_palette.size());
+    for (std::size_t i = 0; i < raw_palette.size(); ++i) {
+        palette.push_back(BlockState(raw_palette[i].at("Name").get<std::string>(), get_properties(raw_palette[i].at("Properties"))));
+    }
+    std::optional<std::vector<uint64_t>> data = std::nullopt;
+    if (block_states_tag.contains("data")) {
+        std::vector<long_t> raw_data = block_states_tag.at("data").get<std::vector<long_t>>();
+        data = {raw_data.begin(), raw_data.end()};
+    }
+    return PalettedContainer<BlockState>(palette, data);
+}
+PalettedContainer<Biome> load_biomes(const NBTTag& biomes_tag) {
+    NBTTag raw_palette = biomes_tag.at("palette");
+    std::vector<Biome> palette;
+    palette.reserve(raw_palette.size());
+    for (std::size_t i = 0; i < raw_palette.size(); ++i) {
+        palette.push_back(Biome(raw_palette[i].at("Name").get<std::string>()));
+    }
+    std::optional<std::vector<uint64_t>> data = std::nullopt;
+    if (biomes_tag.contains("data")) {
+        std::vector<long_t> raw_data = biomes_tag.at("data").get<std::vector<long_t>>();
+        data = {raw_data.begin(), raw_data.end()};
+    }
+    return PalettedContainer<Biome>(palette, data);
+}
+
+// Creates a function that loads this tag into a given chunk.
+std::function<void(Chunk&)> create_chunk_load_task(const NBTTag& chunk_tag) {
+    return [&chunk_tag](Chunk& chunk) {
+        NBTTag sections = chunk_tag.at("sections");
         for (std::size_t i = 0; i < 24; ++i) {
             NBTTag section_tag = sections[i];
             byte_t y = section_tag.at("y").get<byte_t>();
@@ -193,7 +225,8 @@ std::function<void(Chunk&)> create_chunk_load_task(const NBTTag& tag) {
 void load_region_file(Level& level, ChunkPos region_pos, const std::string& filepath) {
     std::array<NBTTag, 1024> tags = read_region_file(filepath);
     for (std::size_t i = 0; i < 1024; ++i) {
-        /// ...
+        ChunkPos pos(region_pos.x + tags[i].at("x").get<int_t>(), region_pos.z + tags[i].at("z").get<int_t>());
+        level.add_task(pos, internal::create_chunk_load_task(tags[i]));
     }
 }
 
@@ -203,6 +236,7 @@ void load_region_file(Level& level, ChunkPos region_pos, const std::string& file
 /// @param filepath The path to the file to store the chunks into.
 void store_region_file(Level& level, ChunkPos region_pos, const std::string& filepath) {
     /// ...
+    throw std::runtime_error("Unimplemented function store_region_file!");
 }
 
 /// @brief Stores all chunks in a level into a region file.
@@ -210,6 +244,7 @@ void store_region_file(Level& level, ChunkPos region_pos, const std::string& fil
 /// @param region_dir_path The path to the directory to store the chunks in.
 void store_all(Level& level, const std::string& region_dir_path) {
     /// ...
+    throw std::runtime_error("Unimplemented function store_all!");
 }
 
 /// @brief Writes a single chunk to a region file.
@@ -219,6 +254,7 @@ void store_all(Level& level, const std::string& region_dir_path) {
 /// @param scheme The compression scheme to use for the chunk.
 void write_chunk(const std::string& path, const NBTTag& chunk_tag, ChunkPos pos, CompressionScheme scheme = ZLIB) {
     /// ...
+    throw std::runtime_error("Unimplemented function write_chunk!");
 }
 
 }
