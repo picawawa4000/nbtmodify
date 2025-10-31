@@ -90,7 +90,7 @@ std::array<NBTTag, 1024> read_region_file(const std::string& path) {
 
 /// @brief Writes individual chunk NBT tags to the region file.
 /// @param path The path to the region file. Overwrites it if it exists, and creates it if it does not.
-/// @param chunk_tags The chunk NBT tags to write to the file (see https://minecraft.wiki/w/Chunk_format). Must be in an order such that the formula `x + z * 32`, where `x` and `z` are the chunk coordinates of the chunk relative to the region, indexes the chunk at `(x, z)`. If a chunk does not exist, its corresponding tag must not be of type `TAG_COMPOUND`.
+/// @param chunk_tags The chunk NBT tags to write to the file (see https://minecraft.wiki/w/Chunk_format). If a chunk does not exist, its corresponding tag must not be of type `TAG_COMPOUND`.
 /// @param chunk_compression The compression format to use for chunks. Defaults to `ZLIB` (which is also Minecraft's default). `LZ4` and `CUSTOM` are not currently supported.
 /// @note All chunks will have their timestamps set, even if they don't exist or weren't modified. This behaviour is subject to change in a later version of the library.
 void write_region_file(const std::string& path, const std::array<NBTTag, 1024>& chunk_tags, CompressionScheme chunk_compression = ZLIB) {
@@ -225,16 +225,17 @@ std::function<void(Chunk&)> create_chunk_load_task(const NBTTag& chunk_tag) {
 void load_region_file(Level& level, ChunkPos region_pos, const std::string& filepath) {
     std::array<NBTTag, 1024> tags = read_region_file(filepath);
     for (std::size_t i = 0; i < 1024; ++i) {
-        ChunkPos pos(region_pos.x + tags[i].at("x").get<int_t>(), region_pos.z + tags[i].at("z").get<int_t>());
+        ChunkPos pos(tags[i].at("x").get<int_t>(), tags[i].at("z").get<int_t>());
         level.add_task(pos, internal::create_chunk_load_task(tags[i]));
     }
 }
 
-/// @brief Stores chunks in a level into a region file.
+/// @brief Stores some chunks in a level into a region file.
 /// @param level The level to get the chunks from.
 /// @param region_pos The region position in the world (`chunk_pos / 32` in both axes).
 /// @param filepath The path to the file to store the chunks into.
-void store_region_file(Level& level, ChunkPos region_pos, const std::string& filepath) {
+/// @param scheme The compression scheme to use for chunks.
+void store_region_file(Level& level, ChunkPos region_pos, const std::string& filepath, CompressionScheme scheme = ZLIB) {
     /// ...
     throw std::runtime_error("Unimplemented function store_region_file!");
 }
@@ -242,7 +243,8 @@ void store_region_file(Level& level, ChunkPos region_pos, const std::string& fil
 /// @brief Stores all chunks in a level into a region file.
 /// @param level The level to get the chunks from.
 /// @param region_dir_path The path to the directory to store the chunks in.
-void store_all(Level& level, const std::string& region_dir_path) {
+/// @param scheme The compression scheme to use for chunks.
+void store_all(Level& level, const std::string& region_dir_path, CompressionScheme scheme = ZLIB) {
     /// ...
     throw std::runtime_error("Unimplemented function store_all!");
 }
